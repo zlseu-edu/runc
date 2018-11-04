@@ -59,3 +59,8 @@ func NewThrottleDevice(major, minor int64, rate uint64) *ThrottleDevice {
 func (td *ThrottleDevice) String() string {
 	return fmt.Sprintf("%d:%d %d", td.Major, td.Minor, td.Rate)
 }
+
+// String2 formats the struct to writable to cgroup v2 specific file
+func (td *ThrottleDevice) String2(s string) string {
+	return fmt.Sprintf("%d:%d %s=%d", td.Major, td.Minor, s, td.Rate)
+}

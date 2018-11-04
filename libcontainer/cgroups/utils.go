@@ -18,15 +18,19 @@ import (
 
 const (
 	cgroupNamePrefix = "name="
+	cgroup2Name      = "unified"
+	cgroup2Option    = "nsdelegate"
 	CgroupProcesses  = "cgroup.procs"
 )
 
+// 找到某个子系统挂载点路径
 // https://www.kernel.org/doc/Documentation/cgroup-v1/cgroups.txt
 func FindCgroupMountpoint(subsystem string) (string, error) {
 	mnt, _, err := FindCgroupMountpointAndRoot(subsystem)
 	return mnt, err
 }
 
+// 找到某cgroup 子系统挂载点 相对路径 和 根路径
 func FindCgroupMountpointAndRoot(subsystem string) (string, string, error) {
 	// We are not using mount.GetMounts() because it's super-inefficient,
 	// parsing it directly sped up x10 times because of not using Sscanf.
@@ -44,8 +48,14 @@ func FindCgroupMountpointAndRoot(subsystem string) (string, string, error) {
 	for scanner.Scan() {
 		txt := scanner.Text()
 		fields := strings.Split(txt, " ")
-		for _, opt := range strings.Split(fields[len(fields)-1], ",") {
-			if opt == subsystem {
+
+		if len(fields) < 4 {
+			continue
+		}
+		dirs := strings.Split(fields[4], "/")
+
+		for _, opt := range strings.Split(dirs[len(dirs)-1], ",") {
+			if opt == subsystem || (subsystem == cgroup2Name && opt == cgroup2Option) {
 				return fields[4], fields[3], nil
 			}
 		}
@@ -57,6 +67,7 @@ func FindCgroupMountpointAndRoot(subsystem string) (string, string, error) {
 	return "", "", NewNotFoundError(subsystem)
 }
 
+// 判断子系统是否存在
 func isSubsystemAvailable(subsystem string) bool {
 	cgroups, err := ParseCgroupFile("/proc/self/cgroup")
 	if err != nil {
@@ -81,6 +92,7 @@ func GetClosestMountpointAncestor(dir, mountinfo string) string {
 	return deepestMountPoint
 }
 
+// 找到cgroup文件系统挂载点
 func FindCgroupMountpointDir() (string, error) {
 	f, err := os.Open("/proc/self/mountinfo")
 	if err != nil {
@@ -102,7 +114,9 @@ func FindCgroupMountpointDir() (string, error) {
 			return "", fmt.Errorf("Found no fields post '-' in %q", text)
 		}
 
-		if postSeparatorFields[0] == "cgroup" {
+		// change 0 to 1
+		// to support cgroup2fs
+		if postSeparatorFields[1] == "cgroup" {
 			// Check that the mount is properly formatted.
 			if numPostFields < 3 {
 				return "", fmt.Errorf("Error found less than 3 fields post '-' in %q", text)
@@ -132,6 +146,7 @@ func (m Mount) GetOwnCgroup(cgroups map[string]string) (string, error) {
 	return getControllerPath(m.Subsystems[0], cgroups)
 }
 
+// 从 /proc/self/mountinfo 里面 按照ss的要求构造出[]Mount
 func getCgroupMountsHelper(ss map[string]bool, mi io.Reader, all bool) ([]Mount, error) {
 	res := make([]Mount, 0, len(ss))
 	scanner := bufio.NewScanner(mi)
@@ -142,15 +157,21 @@ func getCgroupMountsHelper(ss map[string]bool, mi io.Reader, all bool) ([]Mount,
 		if sepIdx == -1 {
 			return nil, fmt.Errorf("invalid mountinfo format")
 		}
-		if txt[sepIdx+3:sepIdx+10] == "cgroup2" || txt[sepIdx+3:sepIdx+9] != "cgroup" {
+		if txt[sepIdx+3:sepIdx+9] != "cgroup" {
 			continue
 		}
+		// if txt[sepIdx+3:sepIdx+10] == "cgroup2" || txt[sepIdx+3:sepIdx+9] != "cgroup" {
+		// 	continue
+		// }
 		fields := strings.Split(txt, " ")
 		m := Mount{
 			Mountpoint: fields[4],
 			Root:       fields[3],
 		}
 		for _, opt := range strings.Split(fields[len(fields)-1], ",") {
+			if opt == cgroup2Option {
+				opt = cgroup2Name
+			}
 			seen, known := ss[opt]
 			if !known || (!all && seen) {
 				continue
@@ -166,12 +187,14 @@ func getCgroupMountsHelper(ss map[string]bool, mi io.Reader, all bool) ([]Mount,
 			res = append(res, m)
 		}
 	}
+
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	return res, nil
 }
 
+// 构建本系统的Mount结构体
 // GetCgroupMounts returns the mounts for the cgroup subsystems.
 // all indicates whether to return just the first instance or all the mounts.
 func GetCgroupMounts(all bool) ([]Mount, error) {
@@ -193,6 +216,7 @@ func GetCgroupMounts(all bool) ([]Mount, error) {
 	return getCgroupMountsHelper(allMap, f, all)
 }
 
+// 得到内核支持的所有cgroup子系统
 // GetAllSubsystems returns all the cgroup subsystems supported by the kernel
 func GetAllSubsystems() ([]string, error) {
 	f, err := os.Open("/proc/cgroups")
@@ -219,6 +243,7 @@ func GetAllSubsystems() ([]string, error) {
 	return subsystems, nil
 }
 
+// 获取某子系统控制文件的位置
 // GetOwnCgroup returns the relative path to the cgroup docker is running in.
 func GetOwnCgroup(subsystem string) (string, error) {
 	cgroups, err := ParseCgroupFile("/proc/self/cgroup")
@@ -229,6 +254,7 @@ func GetOwnCgroup(subsystem string) (string, error) {
 	return getControllerPath(subsystem, cgroups)
 }
 
+// 得到某cgroup子系统控制文件的位置
 func GetOwnCgroupPath(subsystem string) (string, error) {
 	cgroup, err := GetOwnCgroup(subsystem)
 	if err != nil {
@@ -256,6 +282,7 @@ func GetInitCgroupPath(subsystem string) (string, error) {
 	return getCgroupPathHelper(subsystem, cgroup)
 }
 
+// 得到某cgroup子系统控制文件的位置
 func getCgroupPathHelper(subsystem, cgroup string) (string, error) {
 	mnt, root, err := FindCgroupMountpointAndRoot(subsystem)
 	if err != nil {
@@ -272,6 +299,7 @@ func getCgroupPathHelper(subsystem, cgroup string) (string, error) {
 	return filepath.Join(mnt, relCgroup), nil
 }
 
+// 获取某子系统控制下的所以进程ID
 func readProcsFile(dir string) ([]int, error) {
 	f, err := os.Open(filepath.Join(dir, CgroupProcesses))
 	if err != nil {
@@ -308,6 +336,7 @@ func ParseCgroupFile(path string) (map[string]string, error) {
 	return parseCgroupFromReader(f)
 }
 
+// 得到cgroup系统与控制文件的map。
 // helper function for ParseCgroupFile to make testing easier
 func parseCgroupFromReader(r io.Reader) (map[string]string, error) {
 	s := bufio.NewScanner(r)
@@ -326,6 +355,12 @@ func parseCgroupFromReader(r io.Reader) (map[string]string, error) {
 			return nil, fmt.Errorf("invalid cgroup entry: must contain at least two colons: %v", text)
 		}
 
+		// check if cgroup2 enabled.
+		if parts[1] == "" {
+			cgroups[cgroup2Name] = "/docker" //parts[2]
+			continue
+		}
+
 		for _, subs := range strings.Split(parts[1], ",") {
 			cgroups[subs] = parts[2]
 		}
@@ -337,6 +372,7 @@ func parseCgroupFromReader(r io.Reader) (map[string]string, error) {
 	return cgroups, nil
 }
 
+// 找到某个子系统控制文件的路径
 func getControllerPath(subsystem string, cgroups map[string]string) (string, error) {
 
 	if p, ok := cgroups[subsystem]; ok {
@@ -350,6 +386,7 @@ func getControllerPath(subsystem string, cgroups map[string]string) (string, err
 	return "", NewNotFoundError(subsystem)
 }
 
+// 路径是否存在
 func PathExists(path string) bool {
 	if _, err := os.Stat(path); err != nil {
 		return false
@@ -357,6 +394,7 @@ func PathExists(path string) bool {
 	return true
 }
 
+// 将pid加入cgroup控制组
 func EnterPid(cgroupPaths map[string]string, pid int) error {
 	for _, path := range cgroupPaths {
 		if PathExists(path) {
@@ -445,6 +483,7 @@ func GetAllPids(path string) ([]int, error) {
 	return pids, err
 }
 
+// 将进程id写进cgroup的cgroup.procs文件内
 // WriteCgroupProc writes the specified pid into the cgroup's cgroup.procs file
 func WriteCgroupProc(dir string, pid int) error {
 	// Normally dir should not be empty, one case is that cgroup subsystem

@@ -31,6 +31,7 @@ var (
 		&NetPrioGroup{},
 		&PerfEventGroup{},
 		&FreezerGroup{},
+		&UnifiedGroup{},
 		&NameGroup{GroupName: "name=systemd", Join: true},
 	}
 	HugePageSizes, _ = cgroups.GetHugePageSize()
@@ -40,6 +41,7 @@ var errSubsystemDoesNotExist = fmt.Errorf("cgroup: subsystem does not exist")
 
 type subsystemSet []subsystem
 
+// 按名获取某子系统
 func (s subsystemSet) Get(name string) (subsystem, error) {
 	for _, ss := range s {
 		if ss.Name() == name {
@@ -49,6 +51,7 @@ func (s subsystemSet) Get(name string) (subsystem, error) {
 	return nil, errSubsystemDoesNotExist
 }
 
+// cgroup 子系统接口
 type subsystem interface {
 	// Name returns the name of the subsystem.
 	Name() string
@@ -62,6 +65,7 @@ type subsystem interface {
 	Set(path string, cgroup *configs.Cgroup) error
 }
 
+// cgroup Manager 定义
 type Manager struct {
 	mu       sync.Mutex
 	Cgroups  *configs.Cgroup
@@ -129,6 +133,7 @@ func isIgnorableError(rootless bool, err error) bool {
 	return errno == unix.EROFS || errno == unix.EPERM || errno == unix.EACCES
 }
 
+// 将进程ID加入cgroup控制组
 func (m *Manager) Apply(pid int) (err error) {
 	if m.Cgroups == nil {
 		return nil
@@ -143,6 +148,8 @@ func (m *Manager) Apply(pid int) (err error) {
 		return err
 	}
 
+	// 首次进入Paths 未被设置
+	// 其后Paths已经被设置，直接按Paths内路径加入pid
 	m.Paths = make(map[string]string)
 	if c.Paths != nil {
 		for name, path := range c.Paths {
@@ -157,7 +164,7 @@ func (m *Manager) Apply(pid int) (err error) {
 		}
 		return cgroups.EnterPid(m.Paths, pid)
 	}
-
+	// 需要创建相应文件夹
 	for _, sys := range subsystems {
 		// TODO: Apply should, ideally, be reentrant or be broken up into a separate
 		// create and join phase so that the cgroup hierarchy for a container can be
@@ -189,6 +196,7 @@ func (m *Manager) Apply(pid int) (err error) {
 	return nil
 }
 
+// 移除控制组
 func (m *Manager) Destroy() error {
 	if m.Cgroups == nil || m.Cgroups.Paths != nil {
 		return nil
@@ -209,6 +217,7 @@ func (m *Manager) GetPaths() map[string]string {
 	return paths
 }
 
+// 获取各子系统统计信息
 func (m *Manager) GetStats() (*cgroups.Stats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -225,6 +234,7 @@ func (m *Manager) GetStats() (*cgroups.Stats, error) {
 	return stats, nil
 }
 
+// 为各子系统进行资源限制
 func (m *Manager) Set(container *configs.Config) error {
 	// If Paths are set, then we are just joining cgroups paths
 	// and there is no need to set any values.
@@ -234,7 +244,11 @@ func (m *Manager) Set(container *configs.Config) error {
 
 	paths := m.GetPaths()
 	for _, sys := range subsystems {
-		path := paths[sys.Name()]
+		path, exist := paths[sys.Name()]
+		if !exist {
+			continue
+		}
+
 		if err := sys.Set(path, container.Cgroups); err != nil {
 			if m.Rootless && sys.Name() == "devices" {
 				continue
@@ -288,6 +302,9 @@ func (m *Manager) GetAllPids() ([]int, error) {
 	return cgroups.GetAllPids(paths["devices"])
 }
 
+// 构建cgroupData 结构
+// root: cgroup 文件系统挂载点
+// innerPath: 容器所属控制文件夹
 func getCgroupData(c *configs.Cgroup, pid int) (*cgroupData, error) {
 	root, err := getCgroupRoot()
 	if err != nil {
@@ -316,6 +333,7 @@ func getCgroupData(c *configs.Cgroup, pid int) (*cgroupData, error) {
 	}, nil
 }
 
+// 获取容器在某子系统内的控制文件夹目录
 func (raw *cgroupData) path(subsystem string) (string, error) {
 	mnt, err := cgroups.FindCgroupMountpoint(subsystem)
 	// If we didn't mount the subsystem, there is no point we make the path.
@@ -340,6 +358,7 @@ func (raw *cgroupData) path(subsystem string) (string, error) {
 	return filepath.Join(parentPath, raw.innerPath), nil
 }
 
+// 创建相应目录，将pid写入控制组
 func (raw *cgroupData) join(subsystem string) (string, error) {
 	path, err := raw.path(subsystem)
 	if err != nil {

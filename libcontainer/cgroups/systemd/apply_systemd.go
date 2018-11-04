@@ -62,6 +62,7 @@ var subsystems = subsystemSet{
 	&fs.FreezerGroup{},
 	&fs.NetPrioGroup{},
 	&fs.NetClsGroup{},
+	&fs.UnifiedGroup{},
 	&fs.NameGroup{GroupName: "name=systemd"},
 }
 

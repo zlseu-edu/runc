@@ -15,4 +15,8 @@ func TestParseCgroups(t *testing.T) {
 	if _, ok := cgroups["cpu"]; !ok {
 		t.Fail()
 	}
+
+	// if _, ok := cgroups["unified"]; !ok {
+	// 	t.Fail()
+	// }
 }

@@ -1,8 +1,11 @@
 package fs
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/opencontainers/runc/libcontainer/cgroups"
 	"github.com/opencontainers/runc/libcontainer/configs"
@@ -12,6 +15,10 @@ var (
 	supportedSubsystems = supportedSubsystemSet{
 		"blkio",
 		"memory",
+		"cpu",
+		"pids",
+		"devices",
+		"perf_event",
 	}
 )
 
@@ -27,10 +34,12 @@ func (s *UnifiedGroup) Name() string {
 }
 
 func (s *UnifiedGroup) Apply(d *cgroupData) error {
+
 	_, err := d.join("unified")
 	if err != nil && !cgroups.IsNotFound(err) {
 		return err
 	}
+
 	return nil
 }
 
@@ -49,6 +58,18 @@ func (s *UnifiedGroup) Set(path string, cgroup *configs.Cgroup) error {
 				}
 			case "cpu":
 				if err := setCpu(path, cgroup); err != nil {
+					return err
+				}
+			case "pids":
+				if err := setPids(path, cgroup); err != nil {
+					return err
+				}
+			case "devices":
+				if err := setDevices(path, cgroup); err != nil {
+					return err
+				}
+			case "perf_event":
+				if err := setPerf_event(path, cgroup); err != nil {
 					return err
 				}
 			default:
@@ -97,17 +118,102 @@ func setBlkio(path string, cgroup *configs.Cgroup) error {
 	return nil
 }
 
+func setKernelMemory2(path string, kernelMemoryLimit int64) error {
+	return nil
+}
+
+func setMemoryAndSwap2(path string, cgroup *configs.Cgroup) error {
+	return nil
+}
+
 func setMemory(path string, cgroup *configs.Cgroup) error {
 
 	if err := prepareController("+memory"); err != nil {
 		return err
 	}
+
+	if err := setMemoryAndSwap2(path, cgroup); err != nil {
+		return err
+	}
+
+	if cgroup.Resources.KernelMemory != 0 {
+		if err := setKernelMemory2(path, cgroup.Resources.KernelMemory); err != nil {
+			return err
+		}
+	}
+
+	if cgroup.Resources.MemoryReservation != 0 {
+		if err := writeFile(path, "memory.soft_limit_in_bytes", strconv.FormatInt(cgroup.Resources.MemoryReservation, 10)); err != nil {
+			return err
+		}
+	}
+
+	if cgroup.Resources.KernelMemoryTCP != 0 {
+		if err := writeFile(path, "memory.kmem.tcp.limit_in_bytes", strconv.FormatInt(cgroup.Resources.KernelMemoryTCP, 10)); err != nil {
+			return err
+		}
+	}
+	if cgroup.Resources.OomKillDisable {
+		if err := writeFile(path, "memory.oom_control", "1"); err != nil {
+			return err
+		}
+	}
+	if cgroup.Resources.MemorySwappiness == nil || int64(*cgroup.Resources.MemorySwappiness) == -1 {
+		return nil
+	} else if *cgroup.Resources.MemorySwappiness <= 100 {
+		if err := writeFile(path, "memory.swappiness", strconv.FormatUint(*cgroup.Resources.MemorySwappiness, 10)); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("invalid value:%d. valid memory swappiness range is 0-100", *cgroup.Resources.MemorySwappiness)
+	}
+
 	return nil
 }
 
 func setCpu(path string, cgroup *configs.Cgroup) error {
 
 	if err := prepareController("+cpu"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func setPids(path string, cgroup *configs.Cgroup) error {
+
+	if err := prepareController("+pids"); err != nil {
+		return err
+	}
+
+	if cgroup.Resources.PidsLimit != 0 {
+		// "max" is the fallback value.
+		limit := "max"
+
+		if cgroup.Resources.PidsLimit > 0 {
+			limit = strconv.FormatInt(cgroup.Resources.PidsLimit, 10)
+		}
+
+		if err := writeFile(path, "pids.max", limit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func setDevices(path string, cgroup *configs.Cgroup) error {
+
+	if err := prepareController("+devices"); err != nil {
+		return err
+	}
+
+	// TODO: example in tools/testing/selftests/bpf/dev_cgroup.c
+
+	return nil
+}
+
+func setPerf_event(path string, cgroup *configs.Cgroup) error {
+
+	if err := prepareController("+perf_event"); err != nil {
 		return err
 	}
 	return nil
@@ -136,6 +242,89 @@ func prepareController(controller string) error {
 }
 
 func (s *UnifiedGroup) GetStats(path string, stats *cgroups.Stats) error {
+	for _, sys := range supportedSubsystems {
+		// if not find subsystem in cgroup v1, so in v2.
+		if _, err := cgroups.FindCgroupMountpoint(sys); err != nil {
+			switch sys {
+			case "blkio":
+				if err := getBlkioStats(path, stats); err != nil {
+					return err
+				}
+			case "memory":
+				if err := getMemoryStats(path, stats); err != nil {
+					return err
+				}
+			case "cpu":
+				if err := getCpuStats(path, stats); err != nil {
+					return err
+				}
+			case "pids":
+				if err := getPidsStats(path, stats); err != nil {
+					return err
+				}
+			case "devices":
+				if err := getDevicesStats(path, stats); err != nil {
+					return err
+				}
+			case "perf_event":
+				if err := getPerf_eventStats(path, stats); err != nil {
+					return err
+				}
+			default:
+				return errSubsystemDoesNotSupport
+			}
+		}
+	}
+	return nil
+}
+
+func getBlkioStats(path string, stats *cgroups.Stats) error {
+	return nil
+}
+
+func getMemoryStats(path string, stats *cgroups.Stats) error {
+	return nil
+}
+
+func getCpuStats(path string, stats *cgroups.Stats) error {
+	f, err := os.Open(filepath.Join(path, "cpu.stat"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		t, v, err := getCgroupParamKeyValue(sc.Text())
+		if err != nil {
+			return err
+		}
+		switch t {
+		case "nr_periods":
+			stats.CpuStats.ThrottlingData.Periods = v
+
+		case "nr_throttled":
+			stats.CpuStats.ThrottlingData.ThrottledPeriods = v
+
+		case "throttled_time":
+			stats.CpuStats.ThrottlingData.ThrottledTime = v
+		}
+	}
+	return nil
+}
+
+func getPidsStats(path string, stats *cgroups.Stats) error {
+	return nil
+}
+
+func getDevicesStats(path string, stats *cgroups.Stats) error {
+	return nil
+}
+
+func getPerf_eventStats(path string, stats *cgroups.Stats) error {
 	return nil
 }
 

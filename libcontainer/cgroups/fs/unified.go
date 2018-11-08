@@ -123,6 +123,18 @@ func setKernelMemory2(path string, kernelMemoryLimit int64) error {
 }
 
 func setMemoryAndSwap2(path string, cgroup *configs.Cgroup) error {
+	if cgroup.Resources.Memory == -1 {
+		cgroup.Resources.MemorySwap = -1
+	}
+
+	if cgroup.Resources.Memory != 0 && cgroup.Resources.MemorySwap != 0 {
+		if err := writeFile(path, "memory.max", strconv.FormatInt(cgroup.Resources.Memory, 10)); err != nil {
+			return err
+		}
+		if err := writeFile(path, "memory.swap.max", strconv.FormatInt(cgroup.Resources.MemorySwap, 10)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -140,32 +152,6 @@ func setMemory(path string, cgroup *configs.Cgroup) error {
 		if err := setKernelMemory2(path, cgroup.Resources.KernelMemory); err != nil {
 			return err
 		}
-	}
-
-	if cgroup.Resources.MemoryReservation != 0 {
-		if err := writeFile(path, "memory.soft_limit_in_bytes", strconv.FormatInt(cgroup.Resources.MemoryReservation, 10)); err != nil {
-			return err
-		}
-	}
-
-	if cgroup.Resources.KernelMemoryTCP != 0 {
-		if err := writeFile(path, "memory.kmem.tcp.limit_in_bytes", strconv.FormatInt(cgroup.Resources.KernelMemoryTCP, 10)); err != nil {
-			return err
-		}
-	}
-	if cgroup.Resources.OomKillDisable {
-		if err := writeFile(path, "memory.oom_control", "1"); err != nil {
-			return err
-		}
-	}
-	if cgroup.Resources.MemorySwappiness == nil || int64(*cgroup.Resources.MemorySwappiness) == -1 {
-		return nil
-	} else if *cgroup.Resources.MemorySwappiness <= 100 {
-		if err := writeFile(path, "memory.swappiness", strconv.FormatUint(*cgroup.Resources.MemorySwappiness, 10)); err != nil {
-			return err
-		}
-	} else {
-		return fmt.Errorf("invalid value:%d. valid memory swappiness range is 0-100", *cgroup.Resources.MemorySwappiness)
 	}
 
 	return nil

@@ -357,7 +357,7 @@ func parseCgroupFromReader(r io.Reader) (map[string]string, error) {
 
 		// check if cgroup2 enabled.
 		if parts[1] == "" {
-			cgroups[cgroup2Name] = "/docker" //parts[2]
+			cgroups[cgroup2Name] = parts[2] // "docker"
 			continue
 		}
 

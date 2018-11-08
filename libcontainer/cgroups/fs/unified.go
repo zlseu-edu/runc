@@ -176,6 +176,26 @@ func setCpu(path string, cgroup *configs.Cgroup) error {
 	if err := prepareController("+cpu"); err != nil {
 		return err
 	}
+
+	if cgroup.Resources.CpuShares != 0 {
+		if err := writeFile(path, "cpu.weight", strconv.FormatUint(cgroup.Resources.CpuShares, 10)); err != nil {
+			return err
+		}
+	}
+
+	// cgroup v2, cpu controller. "$max $period"
+	if cgroup.Resources.CpuQuota != 0 {
+		quota := strconv.FormatInt(cgroup.Resources.CpuQuota, 10)
+		period := "100000"
+		if cgroup.Resources.CpuPeriod != 0 {
+			period = strconv.FormatUint(cgroup.Resources.CpuPeriod, 10)
+		}
+		result := fmt.Sprintf("%s %s", quota, period)
+		if err := writeFile(path, "cpu.max", result); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

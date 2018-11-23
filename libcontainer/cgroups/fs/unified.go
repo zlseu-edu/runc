@@ -82,7 +82,7 @@ func (s *UnifiedGroup) Set(path string, cgroup *configs.Cgroup) error {
 
 func setBlkio(path string, cgroup *configs.Cgroup) error {
 
-	if err := prepareController("+io"); err != nil {
+	if err := prepareController(path, "+io"); err != nil {
 		return err
 	}
 
@@ -140,7 +140,7 @@ func setMemoryAndSwap2(path string, cgroup *configs.Cgroup) error {
 
 func setMemory(path string, cgroup *configs.Cgroup) error {
 
-	if err := prepareController("+memory"); err != nil {
+	if err := prepareController(path, "+memory"); err != nil {
 		return err
 	}
 
@@ -159,7 +159,7 @@ func setMemory(path string, cgroup *configs.Cgroup) error {
 
 func setCpu(path string, cgroup *configs.Cgroup) error {
 
-	if err := prepareController("+cpu"); err != nil {
+	if err := prepareController(path, "+cpu"); err != nil {
 		return err
 	}
 
@@ -187,7 +187,7 @@ func setCpu(path string, cgroup *configs.Cgroup) error {
 
 func setPids(path string, cgroup *configs.Cgroup) error {
 
-	if err := prepareController("+pids"); err != nil {
+	if err := prepareController(path, "+pids"); err != nil {
 		return err
 	}
 
@@ -208,7 +208,7 @@ func setPids(path string, cgroup *configs.Cgroup) error {
 
 func setDevices(path string, cgroup *configs.Cgroup) error {
 
-	if err := prepareController("+devices"); err != nil {
+	if err := prepareController(path, "+devices"); err != nil {
 		return err
 	}
 
@@ -219,17 +219,17 @@ func setDevices(path string, cgroup *configs.Cgroup) error {
 
 func setPerf_event(path string, cgroup *configs.Cgroup) error {
 
-	if err := prepareController("+perf_event"); err != nil {
+	if err := prepareController(path, "+perf_event"); err != nil {
 		return err
 	}
 	return nil
 }
 
-func prepareController(controller string) error {
-	rootPath, err := cgroups.GetOwnCgroupPath("unified")
-	if err != nil {
-		return errSubsystemDoesNotSupport
-	}
+func prepareController(rootPath, controller string) error {
+	// rootPath, err := cgroups.GetOwnCgroupPath("unified")
+	// if err != nil {
+	// 	return errSubsystemDoesNotSupport
+	// }
 
 	paths := make([]string, 0)
 	for cgroups.PathExists(filepath.Join(rootPath, "cgroup.subtree_control")) {
@@ -238,7 +238,7 @@ func prepareController(controller string) error {
 	}
 
 	len := len(paths)
-	for index := len - 1; index > -1; index-- {
+	for index := len - 1; index > 0; index-- {
 		if err := writeFile(paths[index], "cgroup.subtree_control", controller); err != nil {
 			return err
 		}
